@@ -54,7 +54,8 @@ process AMPLICON_CLIP {
     input:
         tuple val(meta), path("*.bam", arity : 1, name: "locus.bam"), val(locus)
     output:
-        tuple val(meta), path("${meta.id}_${locus.name}_clipped.bam")
+        tuple val(meta), path("${meta.id}_${locus.name}_clipped.bam"), emit: main
+        tuple val(meta.id), path("${meta.id}_${locus.name}_clipped.bam"), val(locus), emit: for_statistics
     script:
     """
     echo "${locus.chr}\t${locus.start}\t${locus.end}" > regions.bed
@@ -87,6 +88,32 @@ process AMPLICON_CLIP {
     """
 }
 
+process GET_STATS {
+    tag "${meta.id}"
+    label 'samtools'
+    container "eod-tools.med-gen.ru/nf-lis-worker:latest"
+
+    input:
+        tuple val(id), path("${id}_${locus.name}_clipped.bam"), val(locus)
+        path panel
+        path conversion_map
+    output:
+        tuple val(id), path("${id}_${locus.name}_stats.csv")
+
+    script:
+    """
+    python get_bisulfite_stats.py --input ${meta.id}_${locus.name}_clipped.bam \
+    --output ${meta.id}_stats.csv \
+    --panel ${panel} \
+    --conversion_map ${conversion_map} \
+    --threads ${task.cpus}
+    """
+    stub:
+    """
+    touch ${meta.id}_stats.csv
+    """
+}
+
 process MERGE_CLIPPED_LOCUSES {
     tag "${meta.id}"
     label 'samtools'
@@ -114,11 +141,23 @@ workflow BAM_PROCESS{
         panel
     main:
         validate_panel = Channel.fromList(samplesheetToList(panel, "assets/schema_panel.json"))
-        merged_bam = FILTER_BAM(alignment).combine(validate_panel) | 
-                     SPLIT_BAM                                     | 
-                     AMPLICON_CLIP                                 |
-                     groupTuple                                    |
-                     MERGE_CLIPPED_LOCUSES             
+        clipped_bam = FILTER_BAM(alignment).combine(validate_panel)                                         | 
+                     SPLIT_BAM                                                                              | 
+                     AMPLICON_CLIP                                 
+        
+        clipped_bam.for_statistics                                                                          | 
+                    GET_STATS                                                                               |
+                    groupTuple                                                                              |                 
+                    map { sample_id, files ->
+                        def merged = [files[0].readLines()[0]]  // header
+                        files.each { f -> merged.addAll(f.readLines().drop(1)) }
+                        tuple(sample_id, merged.join('\n'))
+                    }                                                                                       |
+                    collectFile(storeDir: "${params.output}/QC/coverage") { sample_id, content ->
+                        ["${sample_id}_merged.csv", content + '\n']
+                    }
+        
+        merged_bam = MERGE_CLIPPED_LOCUSES(clipped_bam.main.groupTuple())           
     emit:
         merged_bam
 }

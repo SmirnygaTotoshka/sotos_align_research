@@ -25,7 +25,7 @@ include { ALIGN as BSBOLT } from 'modules/aligners/bsbolt'
 
 process FORM_METH_MAP{
     tag "${meta.id}"
-    label "bismark"
+    label "python"
     container "eod-tools.med-gen.ru/nf-lis-worker:latest"
 
     input:
@@ -81,7 +81,6 @@ workflow {
             raw_alignment = BSBOLT_CALL(processed_alignment)
         }
 
-        coverage_stats = ALIGNMENT_STATS(processed_alignment)
         meth_map = UNIFY_METH_FORMAT(meth_call_files)
         
     publish:
