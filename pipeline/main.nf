@@ -8,42 +8,11 @@ include { validateParameters } from 'plugin/nf-schema'
 include { samplesheetToList } from 'plugin/nf-schema'
 include { paramsHelp } from 'plugin/nf-schema'
 
-include { ILLUMINA_PREPROCESSING } from 'subworkflows/illumina_preprocessing'
-include { TORRENT_PREPROCESSING } from 'subworkflows/torrent_preprocessing'
-include { BAM_PROCESS } from "subworkflows/bam_process"
-include { COVERAGE_STATS } from "subworkflows/coverage_stats"
+include { PROCESS_READS } from 'subworkflows/reads_processing'
+include { PREPARE_REFERENCE } from "subworkflows/prepare_reference"
+include { EXTRACT_BISULITE as EXTRACT_BISULITE_FROM_MIX } from "subworkflows/extract_bisulfite"
+include { BSBOLT } from "subworkflows/bsbolt"
 
-include { ALIGN as BISMARK } from 'modules/aligners/bismark'
-include { ALIGN as BWA_METH } from 'modules/aligners/bwa-meth'
-include { ALIGN as BSBOLT } from 'modules/aligners/bsbolt'
-
-include { METHYLATION_EXTRACTOR as BISMARK_CALL } from 'modules/aligners/bismark'
-include { ALIGN as BWA_METH } from 'modules/aligners/bwa-meth'
-include { ALIGN as BSBOLT } from 'modules/aligners/bsbolt'
-
-
-
-process FORM_METH_MAP{
-    tag "${meta.id}"
-    label "python"
-    container "eod-tools.med-gen.ru/nf-lis-worker:latest"
-
-    input:
-        tuple val(meta), path(meth_data, arity : 1) 
-        path cpg_map
-
-    output:
-        tuple val(meta), path("*.csv"), emit: map 
-
-    script:
-    """
-    python ${workflow.projectDir}/scripts/form_panel_methylation_panel.py --input ${meth_data} --output ${meta.id}_map.csv
-    """
-    stub:
-    """
-    touch ${meta.id}_map.csv
-    """
-}
 
 workflow {
     main: 
@@ -51,47 +20,28 @@ workflow {
         validateParameters()
         
         validate_samplesheet = Channel.fromList(samplesheetToList(params.input, "assets/schema_input.json"))
-        raw_reads = validate_samplesheet.branch{
-            ILLUMINA: validate_samplesheet.reverse != ""
-            TORRENT: validate_samplesheet.reverse == ""
+        
+        reads = PROCESS_READS(validate_samplesheet)
+        bisulfite_reference = PREPARE_REFERENCE(params.bisulfite_reference)
+
+        reads_by_library_type = reads.branch{
+            PURE: meta.type == "pure"
+            MIXED: meta.type == "mixed"
         }
 
-        illumina_processed = ILLUMINA_PREPROCESSING(raw_reads.ILLUMINA)
-        torrent_preprocessing = TORRENT_PREPROCESSING(raw_reads.TORRENT)
-        processed_reads = illumina_processed.mix(torrent_preprocessing)
-
-        raw_alignment = Channel.empty()
-
-        if (params.aligner == "bismark") {
-            raw_alignment = BISMARK(processed_reads, params.reference_folder)
-        } else if (params.aligner == "bwa-meth") {
-            raw_alignment = BWA_METH(processed_reads, params.reference_folder)
-        } else if (params.aligner == "bsbolt") {
-            raw_alignment = BSBOLT(processed_reads, params.reference_folder)
-        }
-
-        processed_alignment = BAM_PROCESS(raw_alignment, params.panel_bed)
-
-        meth_call_files = Channel.empty()
-        if (params.aligner == "bismark") {
-            raw_alignment = BISMARK_CALL(processed_alignment)
-        } else if (params.aligner == "bwa-meth") {
-            raw_alignment = BWA_METH_CALL(processed_alignment)
-        } else if (params.aligner == "bsbolt") {
-            raw_alignment = BSBOLT_CALL(processed_alignment)
-        }
-
-        meth_map = UNIFY_METH_FORMAT(meth_call_files)
+        extracted_bisulfite = EXTRACT_BISULITE_FROM_MIX(reads_by_library_type.MIXED)
+        bisulfite_reads = reads_by_library_type.mix(extracted_bisulfite.reads)
+        meth_results = BSBOLT(bisulfite_reads, bisulfite_reference)
         
     publish:
-        qc_before = processed_reads.qc_before
-        qc_after = processed_reads?.qc_after
-        trim_report = processed_reads?.trimming_result // null-safe
-        raw_alignment = raw_alignment
-        processed_alignment = processed_alignment
-        meth_call_files = meth_call_files
-        coverage_stats = coverage_stats
-        meth_map = meth_map
+        qc = reads.qc
+        fastp = reads.fastp
+        extracted_qc = extracted_bisulfite.qc
+        extracted_fastp = extracted_fastp.fastp
+        reference = bisulfite_reference.bisulfite_reference
+        cpg_context = bisulfite_reference.cpg
+        conversion_context = bisulfite_reference.conversion
+}
 }
 
 output{
