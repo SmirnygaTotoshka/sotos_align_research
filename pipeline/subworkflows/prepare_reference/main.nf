@@ -49,13 +49,10 @@ workflow PREPARE_REFERENCE{
     take:
         bisulfite_reference
     main:
-        prepared_bisulfite_reference = Channel.empty()
-        if (bisulfite_reference == null){
-            prepared_bisulfite_reference = BSBOLT_INDEX(params.usual_reference, params.panel_bed)
-        } 
-        else{
-            prepared_bisulfite_reference = bisulfite_reference
+        prepared_bisulfite_reference = bisulfite_reference.ifEmpty{
+            BSBOLT_INDEX(params.usual_reference, params.panel_bed)
         }
+        
         contexts = GET_CONTEXTS(params.usual_reference, params.panel_bed)
     emit:
         bisulfite_reference = prepared_bisulfite_reference

@@ -5,14 +5,14 @@ process COMBINE_FASTQ {
         val meta
 
     output:
-        tuple val(meta), path("${meta.id}_R?_raw.fastq.gz", arity: 2..*)
+        tuple val(meta), path("${meta.id}_R?_raw.fastq.gz", arity: 2)
     
     script:
+    def forward = meta.forward.join(' ')
+    def reverse = meta.reverse.join(' ')
     """
-        forward_files=\$(ls ${meta.forward})
-        reverse_files=\$(ls ${meta.reverse})
-        zcat \${forward_files} | gzip -c > ${meta.id}_R1_raw.fastq.gz
-        zcat \${reverse_files} | gzip -c > ${meta.id}_R2_raw.fastq.gz
+        zcat ${forward} | gzip -c > ${meta.id}_R1_raw.fastq.gz
+        zcat ${reverse} | gzip -c > ${meta.id}_R2_raw.fastq.gz
     """
     stub:
     """
@@ -30,8 +30,9 @@ process BAM_TO_FASTQ{
         tuple val(meta), path("*.fastq.gz", arity: 1)
 
     script:
+    def forward = meta.forward.join(' ')
     """
-        samtools fastq ${meta.forward} | gzip -c > ${meta.id}_raw.fastq.gz
+        samtools fastq ${forward} | gzip -c > ${meta.id}_raw.fastq.gz
     """
     stub:
     """
@@ -49,7 +50,7 @@ process FASTP {
         tuple val(meta), path('*.{json,html}'), emit: report
 
     script:
-    def io_options = meta.reverse == "" ? "--in1 ${reads[0]} --out1 ${meta.id}_R1_processed.fastq.gz" : "--in1 ${reads[0]} --out1 ${meta.id}_R1_processed.fastq.gz --in2 ${reads[1]} --out2 ${meta.id}_R2_processed.fastq.gz"      
+    def io_options = meta.reverse.size() == 0 ? "--in1 ${reads[0]} --out1 ${meta.id}_R1_processed.fastq.gz" : "--in1 ${reads[0]} --out1 ${meta.id}_R1_processed.fastq.gz --in2 ${reads[1]} --out2 ${meta.id}_R2_processed.fastq.gz"      
         """
         fastp ${io_options} \
         --adapter_fasta ${params.primers_fasta} \
@@ -61,7 +62,7 @@ process FASTP {
         """
 
     stub:
-    if (meta.reverse == ""){
+    if (meta.reverse.size() == 0){
         """
         touch ${meta.id}_R1_processed.fastq.gz
         touch "${meta.id}.fastp.json"
@@ -90,12 +91,12 @@ process BBDUK_REPAIR {
         tuple val(meta), path('*.fastq.gz')
     
     script:
-    def io_options = meta.reverse == "" ? "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz" : "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz --in2 ${reads[1]} --out2 ${meta.id}_R2.fastq.gz"      
+    def io_options = meta.reverse.size() == 0 ? "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz" : "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz --in2 ${reads[1]} --out2 ${meta.id}_R2.fastq.gz"      
     """
         bash /bbmap/repair.sh ${io_options} 
     """
     stub:
-    if (meta.reverse == ""){
+    if (meta.reverse.size() == 0){
         """
         touch ${meta.id}_R1.fastq.gz
         """ 
@@ -134,8 +135,9 @@ workflow PROCESS_READS{
         samples_info
     main:
         split_by_tech = samples_info.branch{
-            ILLUMINA: samples_info.reverse != ""
-            TORRENT: samples_info.reverse == ""
+            s ->
+                ILLUMINA: s.reverse.size() != 0
+                TORRENT: s.reverse.size() == 0
         }
 
         illumina_raw = COMBINE_FASTQ(split_by_tech.ILLUMINA)
@@ -145,6 +147,20 @@ workflow PROCESS_READS{
         trimmed_reads = FASTP(raw_reads) 
         processed_reads = BBDUK_REPAIR(trimmed_reads.reads)
         qc = FASTQC(processed_reads.mix(raw_reads))
+
+    emit:
+        processed_reads = processed_reads
+        qc = qc
+        fastp = trimmed_reads.report
+}
+
+workflow PROCESS_EXTRACTED_READS{
+    take:
+        extracted_reads
+    main:
+        trimmed_reads = FASTP(extracted_reads) 
+        processed_reads = BBDUK_REPAIR(trimmed_reads.reads)
+        qc = FASTQC(processed_reads.mix(extracted_reads))
 
     emit:
         processed_reads = processed_reads

@@ -1,0 +1,189 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/sotos-align-research/master/nextflow_schema.json",
+    "title": "sotos-align-research pipeline parameters",
+    "description": "Methylation analysis pipeline for epigenetic lab, RCMG.",
+    "type": "object",
+    "$defs": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where the pipeline should find input data and save output data.",
+            "required": [
+                "input",
+                "output"
+            ],
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "format": "file-path",
+                    "exists": true,
+                    "schema": "assets/schema_input.json",
+                    "mimetype": "text/csv",
+                    "pattern": "^\\S+\\.csv$",
+                    "description": "Path to comma-separated file containing information about the samples in the experiment.",
+                    "help_text": "You will need to create a design file with information about the samples in your experiment before running the pipeline. Use this parameter to specify its location. It has to be a comma-separated file with 3 columns, and a header row.",
+                    "fa_icon": "fas fa-file-csv"
+                },
+                "output": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Path to output results"
+                },
+                "save_reference": {
+                    "type": "boolean",
+                    "description": "Shoud be reference saved?"
+                }
+            }
+        },
+        "required_files": {
+            "title": "Required files",
+            "type": "object",
+            "description": "",
+            "default": "",
+            "properties": {
+                "usual_reference": {
+                    "type": "string",
+                    "pattern": "^\\S+\\.fa(sta)?",
+                    "format": "file-path",
+                    "description": "Path to reference genome without any modification"
+                },
+                "panel_bed": {
+                    "type": "string",
+                    "pattern": "^\\S+\\.bed",
+                    "format": "file-path",
+                    "description": "Path to bisulfite amplicons coordinates"
+                },
+                "primers_fasta": {
+                    "type": "string",
+                    "pattern": "^\\S+\\.fa(sta)?",
+                    "format": "file-path",
+                    "description": "Path to bisulfite amplicons primers. Need for trimming and clipping"
+                },
+                "bisulfite_reference": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Path to pre-calculated masked bsbolt reference"
+                },
+                "usual_bed": {
+                    "type": "string",
+                    "pattern": "^\\S+\\.bed",
+                    "format": "file-path",
+                    "description": "Path to normal panel coords mixed with bisulfite (panel_bed)"
+                }
+            },
+            "required": [
+                "usual_reference",
+                "panel_bed",
+                "primers_fasta"
+            ]
+        },
+        "analysis_parameters": {
+            "title": "Analysis parameters",
+            "type": "object",
+            "description": "",
+            "default": "",
+            "properties": {
+                "non_directional": {
+                    "type": "boolean",
+                    "description": "Are libraries non-directional?"
+                },
+                "max_call_depth": {
+                    "type": "integer",
+                    "default": 10000,
+                    "description": "Max depth for bsbolt CallMethylation",
+                    "minimum": 10
+                },
+                "min_call_depth": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Min depth for bsbolt CallMethylation",
+                    "minimum": 1
+                },
+                "depth_threshold": {
+                    "type": "integer",
+                    "default": 30,
+                    "description": "Threshold for coverage width calculation",
+                    "minimum": 10
+                }
+            }
+        },
+        "filtration_parameters": {
+            "title": "Filtration parameters",
+            "type": "object",
+            "description": "",
+            "default": "",
+            "properties": {
+                "read_min_len": {
+                    "type": "integer",
+                    "default": 120,
+                    "description": "Minimal read length",
+                    "minimum": 30,
+                    "maximum": 500
+                },
+                "min_mapq": {
+                    "type": "integer",
+                    "default": 40,
+                    "description": "Min MapQ for a alignment",
+                    "minimum": 0,
+                    "maximum": 60
+                },
+                "cut_front": {
+                    "type": "integer",
+                    "default": 24,
+                    "description": "Min BaseQ in a 5`end",
+                    "minimum": 0,
+                    "maximum": 40
+                },
+                "cut_tail": {
+                    "type": "integer",
+                    "default": 24,
+                    "description": "Min BaseQ in a 3`end",
+                    "minimum": 0,
+                    "maximum": 40
+                },
+                "n_base_limit": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Max number N`s in a read",
+                    "minimum": 0,
+                    "maximum": 10
+                },
+                "samtools_flags": {
+                    "type": "string",
+                    "default": "-F4",
+                    "description": "flags for samtools filtration. Should be written as cmd args"
+                },
+                "hardclipped_threshold": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Max number hard-clipped bases",
+                    "minimum": 0,
+                    "maximum": 30
+                },
+                "softclipped_threshold": {
+                    "type": "integer",
+                    "default": 15,
+                    "description": "Max number soft-clipped bases",
+                    "minimum": 0,
+                    "maximum": 30
+                }
+            }
+        }
+    },
+    "allOf": [
+        {
+            "$ref": "#/$defs/input_output_options"
+        },
+        {
+            "$ref": "#/$defs/required_files"
+        },
+        {
+            "$ref": "#/$defs/analysis_parameters"
+        },
+        {
+            "$ref": "#/$defs/filtration_parameters"
+        }
+    ]
+}

@@ -1,0 +1,50 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "file://./assets/schema_input.json",
+    "title": "Sotos align - samplesheet schema",
+    "description": "Schema for the file provided with samplesheet",
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "id": {
+            "type": "string",
+            "pattern": "^\\S+$",
+            "errorMessage": "Sample name must be provided and cannot contain spaces",
+            "meta": "id"
+        },
+        "forward": {
+            "type": "string",
+            "pattern": "^.*\\.(fastq\\.gz|fq\\.gz|ubam)$",
+            "format": "file-path-pattern",
+            "exists": true,
+            "errorMessage": "FastQ file for reads 1 must be provided,",
+            "meta": "forward"
+        },
+        "reverse": {
+            "errorMessage": "FastQ file for reads 2 cannot contain spaces and must have extension '.fq.gz' or '.fastq.gz'",
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^.*\\.f(ast)?q\\.gz$",
+                "format": "file-path-pattern",
+                "exists": true
+              },
+              {
+                "type": "string",
+                "maxLength": 0
+              }
+            ],
+            "meta": "reverse"
+        },
+        "type": {
+          "type": "string",
+          "default": "pure",
+          "enum": ["pure", "mixed"],
+          "errorMessage": "libraries can be 'pure' bisulfite or 'mixed'",
+          "meta": "type"
+        }
+      },
+      "required": ["id", "forward"]
+    }
+}

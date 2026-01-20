@@ -8,7 +8,7 @@ process ALIGN{
         tuple val(meta), path('*.bam')
     
     script:
-    def input_options = meta.reverse == "" ? "-F1 ${reads[0]}" : "-F1 ${reads[0]} -F2 ${reads[1]}"
+    def input_options = meta.reverse.size() == 0 ? "-F1 ${reads[0]}" : "-F1 ${reads[0]} -F2 ${reads[1]}"
     def is_nondirection_option = params.non_directional ? "-UN" : ""       
     """
         python -m bsbolt Align \
@@ -43,10 +43,10 @@ process CLEAN{
 
     samtools index ${task.cpus} sot011_filtered.bam
 
-    samtools view -H sot011_filtered.bam | grep @SQ | sed 's/@SQ\tSN:\|LN://g' > tmp.genome
+    samtools view -H sot011_filtered.bam | grep @SQ | sed 's/@SQ\\tSN:\\|LN://g' > tmp.genome
 
     bedtools flank -i ${panel_bed} -g tmp.genome -l ${primers_max_len} -r ${primers_max_len} | \
-    awk 'BEGIN{FS="\t"; OFS="\t"} {print($1,$2,$3,".",0,".")}' | \
+    awk 'BEGIN{FS="\\t"; OFS="\\t"} {print(\$1,\$2,\$3,".",0,".")}' | \
     sort -k 1,1 -k2,2n > primers.bed
 
     samtools ampliconclip -@ ${task.cpus} \
@@ -63,77 +63,103 @@ process CLEAN{
     stub:
     """
     touch ${meta.id}.bam
+    touch ${meta.id}.bam.bai
     """ 
 }
 process METH_CALL{
     tag "${meta.id}"
     
     input:
-        tuple val(meta), path(reads, arity: 1..2)
+        tuple val(meta), path(alignment), path(index)
+        path reference_dir
 
     output:
-        tuple val(meta), path('*.fastq.gz')
+        tuple val(meta), path(alignment), path("${meta.id}.CGmap.gz"), emit: for_startistic
+        tuple val(meta), path("${meta.id}.CGmap.gz"), emit: cgmap
+        tuple val(meta), path("${meta.id}.bg"), emit: track
     
     script:
-    def io_options = meta.reverse == "" ? "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz" : "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz --in2 ${reads[1]} --out2 ${meta.id}_R2.fastq.gz"      
+    def min_base_quality = Math.max(params.cut_front, params.cut_tail)
     """
-        bash /bbmap/repair.sh ${io_options} 
+        # Call CGmap output
+        python -m bsbolt CallMethylation \
+        -I ${alignment} \
+        -O ${meta.id} \
+        -DB ${reference_dir} \
+        -t ${task.cpus} \
+        -max ${params.max_call_depth} \
+        -min ${params.min_call_depth} \
+        -BQ ${min_base_quality} \
+        -MQ ${params.min_mapq} \
+        -IO
+
+        #repeat call for bedGraph output. It cannot generate CGmap and bedGraph for one call
+        python -m bsbolt CallMethylation \
+        -I ${alignment} \
+        -O ${meta.id} \
+        -DB ${reference_dir} \
+        -t ${task.cpus} \
+        -max ${params.max_call_depth} \
+        -min ${params.min_call_depth} \
+        -BQ ${min_base_quality} \
+        -MQ ${params.min_mapq} \
+        -IO \
+        -BG
     """
     stub:
-    if (meta.reverse == ""){
         """
-        touch ${meta.id}_R1.fastq.gz
-        """ 
-    }
-    else {
+        touch ${meta.id}.CGmap.gz
+        touch ${meta.id}.bg
         """
-        touch ${meta.id}_R1.fastq.gz
-        touch ${meta.id}_R2.fastq.gz
-        """
-    }
 }
 process CALC_STAT{
     tag "${meta.id}"
     
     input:
-        tuple val(meta), path(reads, arity: 1..2)
-
+        tuple val(meta), path(alignment), path(cgmap)
+        path panel
+        path cpg_context
+        path conversion_context
     output:
-        tuple val(meta), path('*.fastq.gz')
+        tuple val(meta), path('*.csv')
     
     script:
-    def io_options = meta.reverse == "" ? "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz" : "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz --in2 ${reads[1]} --out2 ${meta.id}_R2.fastq.gz"      
     """
-        bash /bbmap/repair.sh ${io_options} 
+        python ${workflow.projectDir}/scripts/calculate_statistics.py \
+        --input ${alignment}
+        --output ${meta.id}_statistics.csv
+        --panel ${panel}
+        --cpg ${cpg_context}
+        --conversion ${conversion_context}
+        --cgmap ${cgmap}
+        --depth_threshold ${params.depth_threshold} 
     """
     stub:
-    if (meta.reverse == ""){
-        """
-        touch ${meta.id}_R1.fastq.gz
-        """ 
-    }
-    else {
-        """
-        touch ${meta.id}_R1.fastq.gz
-        touch ${meta.id}_R2.fastq.gz
-        """
-    }
+    """
+    touch ${meta.id}_statistics.csv
+    """ 
 }
 
 workflow BSBOLT{
     take:
         reads
-        bisulfite_reference
+        reference
+        cpg_context
+        conversion_context
     main:
-        raw_alignment = ALIGN(reads, bisulfite_reference)
+        ref_value = reference.first()
+        //cpg_value = cpg_context.first()
+        //conversion_value = conversion_context.first()
+
+        raw_alignment = ALIGN(reads, ref_value)
         cleaned_alignment = CLEAN(raw_alignment, params.panel_bed)
-        calling_result = METH_CALL(cleaned_alignment)
-        statistics = CALC_STAT(cgmap)
+        calling_result = METH_CALL(cleaned_alignment, ref_value)
+        statistics = CALC_STAT(calling_result.for_startistic, params.panel_bed, cpg_context, conversion_context)
     emit:
         alignment = cleaned_alignment
         cgmap = calling_result.cgmap
         track = calling_result.track
-        by_locus = statistics.by_locus
+        by_locus = statistics
 }
 
 def getMaxSeqLen(Path fasta_file){
@@ -153,5 +179,5 @@ def getMaxSeqLen(Path fasta_file){
     }
     if (currentHeader) sequences[currentHeader] = currentSeq
 
-    return sequences.max { it.value.length() }
+    return sequences.max { record -> record.value.length() }
 }
