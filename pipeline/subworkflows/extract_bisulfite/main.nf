@@ -2,10 +2,12 @@ include { PROCESS_EXTRACTED_READS } from './../reads_processing'
 
 process ALIGN {
     tag "${meta.id}"
-
+    label 'align'
+    container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
         tuple val(meta), path(reads)
         path reference
+        path index
     output:
         tuple val(meta), path("*.bam"), path("*.bam.bai")
 
@@ -19,7 +21,7 @@ process ALIGN {
         samtools view -b -h -@ ${samtools_threads} - | \
         samtools sort - -O BAM -o ${meta.id}_mixed.bam -@ ${samtools_threads}
 
-        samtools index -@ ${task.cpus} ${meta.id}_mixed.bam
+        samtools index -M -@ ${task.cpus} ${meta.id}_mixed.bam
     """
     stub:
     """
@@ -31,7 +33,8 @@ process ALIGN {
 
 process EXTRACT{
     tag "${meta.id}"
-
+    label 'samtools'
+container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
         tuple val(meta), path(total_alignment), path(total_index)
         path usual_panel
@@ -60,7 +63,10 @@ workflow EXTRACT_BISULFITE{
     take:
         input_reads
     main:
-        alignments = ALIGN(input_reads, params.usual_reference)
+        index = channel.fromPath(params.usual_reference)
+            .map { fasta -> file("${fasta}.{amb,ann,pac,bwt,sa,fai}")
+            }.collect()
+        alignments = ALIGN(input_reads, params.usual_reference, index)
         bisulfite_reads = EXTRACT(alignments, params.usual_bed)
         processed_reads = PROCESS_EXTRACTED_READS(bisulfite_reads)
     emit:

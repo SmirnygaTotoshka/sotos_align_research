@@ -9,29 +9,33 @@ import pandas as pd
 from collections import namedtuple
 
 def get_seq_metrics(bam_path, contig, start, end, depth_threshold = 30):
+    Metrics = namedtuple('SeqMetrics', ['mean_depth', "coverage_width", "uniformity", "total_reads"])
     with pysam.AlignmentFile(bam_path,"rb") as bam_file:
-        alignments = bam_file.fetch(contig, start, end)
-        total_positions = end - start
-        depths = np.zeros(total_positions, dtype=int)
-        total_reads = 0
-        
-        for a in alignments:
-            if a.is_unmapped or a.is_qcfail or a.is_supplementary or a.is_secondary:
-                continue
-            total_reads += 1
-            read_positions = a.get_reference_positions(full_length=False)
-            for ref_pos in read_positions:
-                if start <= ref_pos < end:
-                    depths[ref_pos - start] += 1
+        total_reads = bam_file.count(until_eof = True)
+        if total_reads == 0:
+            return Metrics(0,0,0,0)
+        else:
+            alignments = bam_file.fetch(contig, start, end)
+            total_positions = end - start
+            depths = np.zeros(total_positions, dtype=int)
+            total_reads = 0
+            
+            for a in alignments:
+                if a.is_unmapped or a.is_qcfail or a.is_supplementary or a.is_secondary:
+                    continue
+                total_reads += 1
+                read_positions = a.get_reference_positions(full_length=False)
+                for ref_pos in read_positions:
+                    if start <= ref_pos < end:
+                        depths[ref_pos - start] += 1
 
-        Metrics = namedtuple('SeqMetrics', ['mean_depth', "coverage_width", "uniformity", "total_reads"])
-        mean_depth = round(depths.mean(),2)
-        return Metrics(
-            mean_depth,
-            round(np.sum(depths > depth_threshold) / (total_positions) * 100,2),
-            round(np.sum(depths > 0.2 * mean_depth) / (total_positions) * 100,2),
-            total_reads
-        )
+            mean_depth = round(depths.mean(),2)
+            return Metrics(
+                mean_depth,
+                round(np.sum(depths > depth_threshold) / (total_positions) * 100,2),
+                round(np.sum(depths > 0.2 * mean_depth) / (total_positions) * 100,2),
+                total_reads
+            )
     
 def get_methylation_metrics(bam_path, cpg_context_path, conversion_context_path, contig, start, end):
     cpg_context = pd.read_csv(cpg_context_path,sep = "\t",header = None)
@@ -42,20 +46,24 @@ def get_methylation_metrics(bam_path, cpg_context_path, conversion_context_path,
     cpg_context["C_count"] = 0
     conversion_context["T_count"] = 0 
     conversion_context["C_count"] = 0
-    with pysam.AlignmentFile(bam_path,"rb") as bam_file:
-        pileupcolumns = bam_file.pileup(contig, start, end, truncate=True, stepper='all')
-        for pileupcolumn in pileupcolumns:
-            sequences = pileupcolumn.get_query_sequences()
-            if pileupcolumn.reference_pos in cpg_context[1].values:
-                cpg_context.loc[cpg_context[1] == pileupcolumn.reference_pos,"C_count"] = sequences.count('c') + sequences.count('C')
-                cpg_context.loc[cpg_context[1] == pileupcolumn.reference_pos,"T_count"] = sequences.count('t') + sequences.count('T')
-            elif pileupcolumn.reference_pos in conversion_context[1].values:
-                conversion_context.loc[conversion_context[1] == pileupcolumn.reference_pos,"C_count"] = sequences.count('c') + sequences.count('C')
-                conversion_context.loc[conversion_context[1] == pileupcolumn.reference_pos,"T_count"] = sequences.count('t') + sequences.count('T')
-    mean_methylation = round((cpg_context["C_count"] / (cpg_context["C_count"] + cpg_context["T_count"])).mean(skipna=True) * 100,2)
-    mean_conversion = round((conversion_context["T_count"] / (conversion_context["C_count"] + conversion_context["T_count"])).mean() * 100,2)
     Metrics = namedtuple('MethylMetrics', ['mean_methylation', "mean_conversion"])
-    return Metrics(mean_methylation, mean_conversion)
+    with pysam.AlignmentFile(bam_path,"rb") as bam_file:
+        total_reads = bam_file.count(until_eof = True)
+        if total_reads == 0:
+            return Metrics(0,0)
+        else:
+            pileupcolumns = bam_file.pileup(contig, start, end, truncate=True, stepper='all')
+            for pileupcolumn in pileupcolumns:
+                sequences = pileupcolumn.get_query_sequences()
+                if pileupcolumn.reference_pos in cpg_context[1].values:
+                    cpg_context.loc[cpg_context[1] == pileupcolumn.reference_pos,"C_count"] = sequences.count('c') + sequences.count('C')
+                    cpg_context.loc[cpg_context[1] == pileupcolumn.reference_pos,"T_count"] = sequences.count('t') + sequences.count('T')
+                elif pileupcolumn.reference_pos in conversion_context[1].values:
+                    conversion_context.loc[conversion_context[1] == pileupcolumn.reference_pos,"C_count"] = sequences.count('c') + sequences.count('C')
+                    conversion_context.loc[conversion_context[1] == pileupcolumn.reference_pos,"T_count"] = sequences.count('t') + sequences.count('T')
+            mean_methylation = round((cpg_context["C_count"] / (cpg_context["C_count"] + cpg_context["T_count"])).mean(skipna=True) * 100,2)
+            mean_conversion = round((conversion_context["T_count"] / (conversion_context["C_count"] + conversion_context["T_count"])).mean() * 100,2)
+            return Metrics(mean_methylation, mean_conversion)
 
 
 if __name__ == '__main__':
@@ -95,17 +103,25 @@ if __name__ == '__main__':
         panel.loc[i,"mean_methylation"] = methylation_metrics.mean_methylation
         panel.loc[i,"mean_conversion"] = methylation_metrics.mean_conversion
     
-    cgmap = pd.read_csv(args.cgmap, sep = "\t", header = None)
-    cgmap.columns = ["chr",'nucleotide','pos','context','subcontext','value','n_meth_bases','depth']
-    for i in cgmap.index:
-        for j in panel.index:
-            if cgmap.loc[i,"chr"] == panel.iloc[j,0] and cgmap.loc[i,"pos"] >= panel.iloc[j,1] and cgmap.loc[i,"pos"] < panel.iloc[j,2]:
-                cgmap.loc[i,"region"] = panel.loc[j,"region"]
-                
-    meth = cgmap.query("subcontext == 'CG'")
-    conversion = cgmap.query("subcontext != 'CG'")
-    m1 = meth.groupby('region').agg(meth_by_caller = pd.NamedAgg('value', aggfunc='mean'))
-    m2 = conversion.groupby('region').agg(conversion_by_caller = pd.NamedAgg('value', aggfunc='mean'))
-    p1 = pd.merge(panel, m1, on='region', how='inner')
-    p2 = pd.merge(p1, m2, on='region', how='inner')
-    p2.to_csv(args.output, sep = ";", index = False)
+    try:
+        cgmap = pd.read_csv(args.cgmap, sep = "\t", header = None)
+        cgmap.columns = ["chr",'nucleotide','pos','context','subcontext','value','n_meth_bases','depth']
+        for i in cgmap.index:
+            for j in panel.index:
+                if cgmap.loc[i,"chr"] == panel.iloc[j,0] and cgmap.loc[i,"pos"] >= panel.iloc[j,1] and cgmap.loc[i,"pos"] < panel.iloc[j,2]:
+                    cgmap.loc[i,"region"] = panel.loc[j,"region"]
+                    
+        meth = cgmap.query("subcontext == 'CG'")
+        conversion = cgmap.query("subcontext != 'CG'")
+        m1 = meth.groupby('region').agg(meth_by_caller = pd.NamedAgg('value', aggfunc='mean'))
+        m2 = conversion.groupby('region').agg(conversion_by_caller = pd.NamedAgg('value', aggfunc='mean'))
+        p1 = pd.merge(panel, m1, on='region', how='outer')
+        p2 = pd.merge(p1, m2, on='region', how='outer')
+        p2.to_csv(args.output, sep = ";", index = False)
+    except pd.errors.EmptyDataError:
+        empty = pd.DataFrame()
+        empty["region"] = panel["region"]
+        empty["meth_by_caller"] = pd.NA
+        empty["conversion_by_caller"] = pd.NA
+        p2 = pd.merge(panel, empty, on='region', how='outer')
+        p2.to_csv(args.output, sep = ";", index = False)

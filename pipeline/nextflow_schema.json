@@ -33,7 +33,7 @@
                 },
                 "save_reference": {
                     "type": "boolean",
-                    "description": "Shoud be reference saved?"
+                    "description": "Should be reference saved?"
                 }
             }
         },
@@ -48,6 +48,11 @@
                     "pattern": "^\\S+\\.fa(sta)?",
                     "format": "file-path",
                     "description": "Path to reference genome without any modification"
+                },
+                "usual_reference_dir": {
+                    "type": "string",
+                    "format": "directory-path",
+                    "description": "Path to reference genome directory without any modification. Need for mixed libraries"
                 },
                 "panel_bed": {
                     "type": "string",

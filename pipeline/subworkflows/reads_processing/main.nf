@@ -1,18 +1,18 @@
 process COMBINE_FASTQ {
     tag "${meta.id}"
-
+    label 'single'
+    container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
-        val meta
-
+        tuple val(meta), path(forward, stageAs: 'forward_*.fastq.gz'), path(reverse, stageAs: 'reverse_*.fastq.gz')
     output:
         tuple val(meta), path("${meta.id}_R?_raw.fastq.gz", arity: 2)
     
     script:
-    def forward = meta.forward.join(' ')
-    def reverse = meta.reverse.join(' ')
+    def f = forward.collect().join(' ')
+    def r = reverse.collect().join(' ')
     """
-        zcat ${forward} | gzip -c > ${meta.id}_R1_raw.fastq.gz
-        zcat ${reverse} | gzip -c > ${meta.id}_R2_raw.fastq.gz
+        zcat ${f} | gzip -c > ${meta.id}_R1_raw.fastq.gz
+        zcat ${r} | gzip -c > ${meta.id}_R2_raw.fastq.gz
     """
     stub:
     """
@@ -23,17 +23,27 @@ process COMBINE_FASTQ {
 
 process BAM_TO_FASTQ{
     tag "${meta.id}"
-    
+    label 'samtools'
+    container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
-        val meta
+        tuple val(meta), path(forward, stageAs: 'forward_*.ubam'), path(reverse, stageAs: 'reverse_*.ubam')
     output:
         tuple val(meta), path("*.fastq.gz", arity: 1)
 
     script:
-    def forward = meta.forward.join(' ')
-    """
-        samtools fastq ${forward} | gzip -c > ${meta.id}_raw.fastq.gz
-    """
+    def R1 = forward.collect().join(' ')
+    def num_files = forward.collect().size()
+    if (num_files == 1){
+        """
+            samtools fastq ${forward} | gzip -c > ${meta.id}_raw.fastq.gz
+        """
+    }
+    else if (num_files > 1){
+        """
+            samtools merge tmp.ubam ${R1}
+            samtools fastq tmp.ubam | gzip -c > ${meta.id}_raw.fastq.gz
+        """
+    }
     stub:
     """
     touch ${meta.id}_raw.fastq.gz
@@ -42,7 +52,8 @@ process BAM_TO_FASTQ{
 
 process FASTP {
     tag "${meta.id}"
-
+    label 'samtools'
+    container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
         tuple val(meta), path(reads)
     output:
@@ -83,7 +94,9 @@ process FASTP {
 
 process BBDUK_REPAIR {
     tag "${meta.id}"
+    label 'single'
     
+    container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
         tuple val(meta), path(reads, arity: 1..2)
 
@@ -91,9 +104,17 @@ process BBDUK_REPAIR {
         tuple val(meta), path('*.fastq.gz')
     
     script:
-    def io_options = meta.reverse.size() == 0 ? "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz" : "--in ${reads[0]} --out ${meta.id}_R1.fastq.gz --in2 ${reads[1]} --out2 ${meta.id}_R2.fastq.gz"      
+    def io_options = meta.reverse.size() == 0 ? "--in=${reads[0]} --out=${meta.id}_R1.fastq.gz" : "--in=${reads[0]} --out=${meta.id}_R1.fastq.gz --in2=${reads[1]} --out2=${meta.id}_R2.fastq.gz"      
+    def avail_mem = task.memory ?: 4.GB
+    def mem_mb = avail_mem.toMega()
+    
+    // Оставляем минимум 500 MB для системы
+    def jvm_mem = mem_mb > 1000 ? (mem_mb - 500) : 512
+    
+    // Для безопасности проверяем что число положительное
+    jvm_mem = Math.max(512, jvm_mem)
     """
-        bash /bbmap/repair.sh ${io_options} 
+        bash /bbmap/repair.sh ${io_options} -Xmx${jvm_mem}m
     """
     stub:
     if (meta.reverse.size() == 0){
@@ -111,7 +132,8 @@ process BBDUK_REPAIR {
 
 process FASTQC {
     tag "${meta.id}"
-    
+    label 'samtools'
+    container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
     tuple val(meta), path(reads)
 
@@ -134,12 +156,17 @@ workflow PROCESS_READS{
     take:
         samples_info
     main:
-        split_by_tech = samples_info.branch{
+        split_by_tech = samples_info.map{
+            sample -> tuple(                
+                    sample, 
+                    sample.forward,
+                    sample.reverse
+            )
+        }.branch{
             s ->
-                ILLUMINA: s.reverse.size() != 0
-                TORRENT: s.reverse.size() == 0
+                ILLUMINA: s[2].size() != 0
+                TORRENT: s[2].size() == 0
         }
-
         illumina_raw = COMBINE_FASTQ(split_by_tech.ILLUMINA)
         torrent_raw = BAM_TO_FASTQ(split_by_tech.TORRENT)
 

@@ -1,7 +1,8 @@
 process BSBOLT_INDEX{
 
     tag "${reference_file}"
-
+    label 'single'
+container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
         path reference_file
         path panel_bed
@@ -23,7 +24,8 @@ process BSBOLT_INDEX{
 
 process GET_CONTEXTS{
     tag "${reference_file}"
-
+    label 'single'
+container "eod-tools.med-gen.ru/sotos-align:1.0"
     input:
         path reference_file
         path panel_bed
@@ -33,10 +35,10 @@ process GET_CONTEXTS{
     script:
     """
         python ${workflow.projectDir}/scripts/get_contexts.py \
-        --input ${reference_file} \
-        --panel ${panel_bed} \
-        --out_cpg cpg_context.bed \
-        --out_conversion conversion_context.bed
+        ${reference_file} \
+        ${panel_bed} \
+        cpg_context.bed \
+        conversion_context.bed
     """
     stub:
     """

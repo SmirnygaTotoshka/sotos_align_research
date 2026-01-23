@@ -1,31 +1,20 @@
 # Use Debian slim with Python 3.12
-FROM python:3.12-slim-bookworm
+FROM eod-tools.med-gen.ru/pbis:bionic
 
 # Install ALL build dependencies including autoconf, automake, and other dev tools
 RUN apt-get update && apt-get install -y \
     wget \
-    curl \
-    gzip \
-    bzip2 \
-    # Full build toolchain
+    libz-dev \
     build-essential \
-    make \
-    gcc \
-    g++ \
     autoconf \
     automake \
-    libtool \
     pkg-config \
-    # Library development headers
+    libtool \
     zlib1g-dev \
     libbz2-dev \
     liblzma-dev \
-    libncurses5-dev \
-    libncursesw5-dev \
-    libssl-dev \
-    # Other tools that might be needed
-    cmake \
-    git \
+    libcurl4-openssl-dev \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Mambaforge (includes conda and mamba)
@@ -38,16 +27,18 @@ RUN wget -q https://github.com/conda-forge/miniforge/releases/download/25.11.0-1
 ENV PATH=$CONDA_DIR/bin:$PATH
 ENV NPY_DISABLE_CPU_FEATURES="AVX2,AVX,FMA3,FMA4,SSE42,SSE41,SSSE3"
 # Accept Terms of Service (Mambaforge handles this differently)
-RUN mamba init bash \
-    && mamba config --set always_yes true
+RUN conda init bash \
+    && conda config --set always_yes true
 
 # Set up channels and install packages using mamba (faster)
-RUN mamba config --add channels bioconda \
-    && mamba config --add channels conda-forge \
+RUN conda config --add channels bioconda \
+    && conda config --add channels conda-forge \
     && mamba install -y \
         samtools=1.23 \
         bedtools \
         bwa \
+        fastqc \
+        fastp \
         python=3.12 \
         gzip \
         bzip2 \
@@ -59,15 +50,14 @@ RUN mamba config --add channels bioconda \
 
 RUN wget https://sourceforge.net/projects/bbmap/files/BBMap_39.10.tar.gz && \
     tar -xzf BBMap_39.10.tar.gz && \
-    mv bbmap/*.sh /usr/local/bin/ && \
-    rm -r BBMap_39.10.tar.gz bbmap
+    rm -r BBMap_39.10.tar.gz
 
 # Install Python packages via pip
 RUN pip install --no-cache-dir bsbolt
 
 # Optional: Clean up build tools to reduce image size
-RUN apt-get remove -y build-essential gcc g++ autoconf automake libtool pkg-config cmake \
-     zlib1g-dev libbz2-dev liblzma-dev libncurses5-dev libncursesw5-dev libssl-dev git \
+RUN apt-get remove -y build-essential gcc g++ autoconf automake libtool pkg-config \
+     zlib1g-dev libbz2-dev liblzma-dev \
      && apt-get autoremove -y \
      && rm -rf /var/lib/apt/lists/*
 
